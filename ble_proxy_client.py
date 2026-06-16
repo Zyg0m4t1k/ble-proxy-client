@@ -203,7 +203,8 @@ class BleProxyClient:
 
     async def cmd_stop_scan(self, args: dict):
         if not self.scanning:
-            raise CommandError("not_scanning", "Aucun scan en cours")
+            log.info("stop_scan: aucun scan en cours (no-op)")
+            return {}
         await self.scanner.stop()
         self.scanning = False
         self.scanner = None
