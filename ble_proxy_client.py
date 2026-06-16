@@ -227,6 +227,16 @@ class BleProxyClient:
                 asyncio.create_task(self._on_disconnected(h, "unexpected"))
             return _cb
 
+        # BlueZ refuse une connexion si un scan est en cours (InProgress)
+        if self.scanning:
+            log.info("Auto-stop du scan avant connexion (BlueZ InProgress workaround)")
+            try:
+                await self.scanner.stop()
+            except Exception:
+                pass
+            self.scanning = False
+            self.scanner = None
+
         client = BleakClient(
             address,
             timeout=timeout,
