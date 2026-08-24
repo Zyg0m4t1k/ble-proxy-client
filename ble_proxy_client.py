@@ -77,6 +77,8 @@ class BleProxyClient:
         self.last_subscribe_char: dict[int, str] = {}
         self.scanning = False
         self.scanner: BleakScanner | None = None
+        # Adresse normalisée -> objet BLEDevice fourni par Bleak pendant le scan
+        self.discovered_devices = {}
         self.next_handle = 1
 
     # ------------------------------------------------------------------
@@ -156,6 +158,10 @@ class BleProxyClient:
         if self.scanning:
             raise CommandError("already_scanning", "Un scan est déjà en cours")
 
+        # Un BLEDevice est lié à la session de découverte courante.
+        # Évite de réutiliser un objet devenu obsolète lors d'un nouveau scan.
+        self.discovered_devices.clear()
+
         service_uuids = args.get("service_uuids", [])
         normalized_filters = [normalize_uuid(u) for u in service_uuids] if service_uuids else None
 
@@ -198,6 +204,10 @@ class BleProxyClient:
         if manufacturer_data:
             data["manufacturer_data"] = manufacturer_data
 
+        self.discovered_devices[device.address.lower()] = device
+        log.info(
+            f"BLEDevice mémorisé: address={device.address} name={device.name}"
+        )
         log.info(f"device_discovered: {data}")
         await self.send_event("device_discovered", data)
 
@@ -220,6 +230,15 @@ class BleProxyClient:
             if c.address.lower() == address.lower():
                 raise CommandError("already_connected", f"Déjà connecté à {address}")
 
+        device = self.discovered_devices.get(address.lower())
+        if device is None:
+            log.warning(f"Cache BLE miss pour {address}")
+            raise CommandError(
+                "connection_failed",
+                f"Device with address {address} was not cached during scan.",
+            )
+        log.info(f"Cache BLE hit pour {address}: {device}")
+
         handle = self.next_handle
         self.next_handle += 1
 
@@ -228,9 +247,9 @@ class BleProxyClient:
                 asyncio.create_task(self._on_disconnected(h, "unexpected"))
             return _cb
 
-        # BlueZ refuse une connexion si un scan est en cours (InProgress)
+        # Évite les conflits entre découverte et connexion selon le backend BLE.
         if self.scanning:
-            log.info("Auto-stop du scan avant connexion (BlueZ InProgress workaround)")
+            log.info("Auto-stop du scan avant connexion BLE")
             try:
                 await self.scanner.stop()
             except Exception:
@@ -239,7 +258,7 @@ class BleProxyClient:
             self.scanner = None
 
         client = BleakClient(
-            address,
+            device,
             timeout=timeout,
             disconnected_callback=make_disconnect_cb(handle),
         )
