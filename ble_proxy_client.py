@@ -277,10 +277,13 @@ class BleProxyClient:
         if handle not in self.connections:
             return
         log.info(f"Déconnexion inattendue handle={handle} reason={reason}")
+        # Envoyer l'événement AVANT de nettoyer, pour laisser les écritures
+        # en vol se terminer proprement via le guard is_connected.
+        await self.send_event("disconnected", {"connection_handle": handle, "reason": reason})
+        await asyncio.sleep(0.5)
         self.connections.pop(handle, None)
         self.last_write_char.pop(handle, None)
         self.last_subscribe_char.pop(handle, None)
-        await self.send_event("disconnected", {"connection_handle": handle, "reason": reason})
 
     async def cmd_disconnect(self, args: dict):
         handle = args["connection_handle"]
@@ -458,13 +461,26 @@ class BleProxyClient:
         if opcode == OP_WRITE_DATA:
             char_uuid = self.last_write_char.get(handle, C1_UUID)
             client = self.connections.get(handle)
+
             if client is None:
                 log.warning(f"WRITE_DATA pour handle inconnu {handle}")
                 return
+
+            if not client.is_connected:
+                log.warning(f"WRITE_DATA ignoré : handle={handle} déjà déconnecté")
+                return
+
             try:
-                await client.write_gatt_char(char_uuid, payload, response=True)
+                await client.write_gatt_char(
+                    char_uuid,
+                    payload,
+                    response=False,
+                )
             except Exception:
-                log.exception("Échec écriture binaire (WRITE_DATA)")
+                log.exception(
+                    f"Échec écriture binaire WRITE_DATA "
+                    f"handle={handle} char={char_uuid} len={len(payload)}"
+                )
         else:
             log.warning(f"Opcode binaire inattendu côté client: 0x{opcode:02x}")
 
