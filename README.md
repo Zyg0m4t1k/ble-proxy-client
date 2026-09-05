@@ -1,47 +1,31 @@
 # BLE Proxy Client
 
-Client BLE Proxy WebSocket pour `matterjs-server`, développé en Python avec **Bleak** et **WebSockets**.
+Client Bluetooth pour le plugin Matter de Jeedom.
 
-Ce client permet d'utiliser un adaptateur Bluetooth présent sur une machine distante (Windows, Linux, etc.) comme proxy BLE pour un serveur Matter exécuté ailleurs. Il implémente le protocole **BLE Proxy WebSocket v1** utilisé par `matterjs-server`.
+Ce programme permet d'utiliser un adaptateur Bluetooth situe sur une autre machine (ou sur l'hote d'un conteneur Docker) pour ajouter des appareils Matter via Bluetooth (commissioning BLE).
 
-## Fonctionnalités
+## Quand l'utiliser ?
 
-- Handshake BLE Proxy v1 (`hello` / `hello_response`)
-- Scan BLE avec filtrage sur les UUIDs de service
-- Détection des appareils Matter (`FFF6`)
-- Connexion / déconnexion BLE
-- Découverte des services et caractéristiques GATT
-- Lecture et écriture de caractéristiques
-- Notifications BLE
-- Gestion du protocole BTP Matter
-- Transmission binaire optimisée pour les échanges Matter
-- Compatible Windows (Bleak / WinRT)
-- Compatible Linux
+- Jeedom tourne dans un **conteneur Docker** sans acces direct au Bluetooth
+- Jeedom est sur une **machine virtuelle** sans Bluetooth
+- Le serveur Jeedom n'a **pas d'adaptateur Bluetooth** et vous voulez utiliser celui d'un autre PC (Windows, Linux...)
 
-## Dépendances
+Une fois l'appareil ajoute (commissionne), le Bluetooth n'est plus necessaire : le plugin communique ensuite en IP.
 
-- Python 3.10+
-- bleak
-- websockets
+## Installation
 
-Installation :
+Prerequis : Python 3.10 ou superieur.
 
 ```bash
 pip install bleak websockets
 ```
 
-ou :
-
-```bash
-pip install -r requirements.txt
-```
-
 ## Utilisation
 
-Lancer le client en indiquant l'URL WebSocket du serveur Matter :
+Lancer le client en indiquant l'adresse de votre Jeedom :
 
 ```bash
-python ble_proxy_client.py ws://IP_DU_SERVEUR:5580/ble
+python ble_proxy_client.py ws://IP_JEEDOM:5580/ble
 ```
 
 Exemple :
@@ -50,81 +34,39 @@ Exemple :
 python ble_proxy_client.py ws://192.168.1.139:5580/ble
 ```
 
-## Fonctionnement
+### Choisir un adaptateur Bluetooth specifique
 
-1. Le client se connecte au serveur Matter via WebSocket.
-2. Un handshake est effectué pour vérifier la compatibilité du protocole.
-3. Le serveur envoie les commandes BLE au client.
-4. Le client exécute les opérations via Bleak :
-   - scan
-   - connexion
-   - découverte GATT
-   - lecture/écriture
-   - notifications
-5. Les résultats sont renvoyés au serveur via WebSocket.
-
-## UUID Matter utilisés
-
-Service Matter :
-
-```text
-FFF6
-```
-
-Caractéristiques principales :
-
-```text
-18EE2EF5-263D-4559-959F-4F9C429F9D11
-18EE2EF5-263D-4559-959F-4F9C429F9D12
-18EE2EF5-263D-4559-959F-4F9C429F9D13
-```
-
-## Exemple d'utilisation
-
-Machine A :
-
-```text
-Matter Server
-192.168.1.139
-Port WebSocket : 5580
-```
-
-Machine B :
-
-```text
-Windows avec Bluetooth
-BLE Proxy Client
-```
-
-Connexion :
+Si votre machine possede plusieurs adaptateurs Bluetooth (par exemple un Bluetooth interne et un dongle USB), vous pouvez forcer l'utilisation d'un adaptateur precis avec son adresse MAC :
 
 ```bash
-python ble_proxy_client.py ws://192.168.1.139:5580/ble
+python ble_proxy_client.py ws://192.168.1.139:5580/ble --adapter A0:AD:9F:78:93:09
 ```
 
-Le serveur Matter utilisera alors automatiquement l'adaptateur Bluetooth de la machine B pour le commissionnement Matter.
+Pour connaitre les adaptateurs disponibles :
 
-## Logs
-
-Le client affiche les événements importants :
-
-```text
-Connexion WebSocket
-Handshake
-Détection des périphériques
-Connexion BLE
-Notifications
-Déconnexions
-Erreurs
+```bash
+bluetoothctl list
 ```
+
+Sans l'option `--adapter`, le client utilise l'adaptateur par defaut du systeme.
+
+## Configuration cote Jeedom
+
+Dans la configuration du plugin Matter, cochez **BLE Proxy (distant)** puis redemarrez le demon. Le serveur Matter attend alors qu'un client BLE Proxy se connecte pour le commissioning.
+
+## Fonctionnement
+
+1. Le client se connecte au serveur Matter de Jeedom via WebSocket
+2. Quand vous lancez un commissioning dans Jeedom, le serveur envoie les commandes Bluetooth au client
+3. Le client effectue les operations BLE (scan, connexion, echange de cles) via l'adaptateur local
+4. Une fois le commissioning termine, le Bluetooth n'est plus utilise
 
 ## Cas d'usage
 
-- Machine virtuelle sans accès Bluetooth
-- Serveur distant sans adaptateur BLE
-- Commissionnement Matter depuis Windows
-- Tests et développement Matter
-- Débogage BLE à distance
+- **Docker** : Jeedom en conteneur, Bluetooth sur l'hote ou un autre PC
+- **Machine virtuelle** : VM sans acces Bluetooth
+- **Serveur deporte** : serveur Jeedom sans Bluetooth, dongle BLE sur un PC du reseau
+- **Windows** : utiliser le Bluetooth d'un PC Windows pour ajouter des appareils Matter
 
 ## Licence
 

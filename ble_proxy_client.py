@@ -17,14 +17,50 @@ Implémente le protocole BLE Proxy WebSocket v1:
 
 import asyncio
 import base64
+import glob
 import json
 import logging
 import struct
+import subprocess
 import sys
 
 import websockets
 from bleak import BleakScanner, BleakClient
 from bleak.backends.scanner import AdvertisementData
+
+
+def resolve_mac_to_hci(mac: str) -> str:
+    """Résout une adresse MAC Bluetooth vers le nom hciX correspondant.
+
+    Tente d'abord /sys/class/bluetooth/hciX/address, puis fallback sur
+    bluetoothctl list si /sys/class/bluetooth n'est pas accessible (conteneur).
+    """
+    mac_lower = mac.lower().strip()
+
+    # Méthode 1 : /sys/class/bluetooth/hciX/address
+    for path in sorted(glob.glob("/sys/class/bluetooth/hci*/address")):
+        try:
+            with open(path) as f:
+                addr = f.read().strip().lower()
+            if addr == mac_lower:
+                return path.split("/")[-2]  # "hci0", "hci1"...
+        except OSError:
+            continue
+
+    # Méthode 2 : bluetoothctl list (ordre = hci0, hci1, ...)
+    try:
+        output = subprocess.check_output(
+            ["bluetoothctl", "list"], timeout=5, text=True, stderr=subprocess.DEVNULL
+        )
+        for idx, line in enumerate(output.strip().splitlines()):
+            # "Controller AA:BB:CC:DD:EE:FF name [default]"
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].lower() == mac_lower:
+                return f"hci{idx}"
+    except Exception:
+        pass
+
+    raise ValueError(f"Aucun adaptateur Bluetooth trouvé pour la MAC {mac}")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,8 +102,9 @@ def short_uuid(uuid_str: str) -> str:
 
 
 class BleProxyClient:
-    def __init__(self, ws_url: str):
+    def __init__(self, ws_url: str, adapter: str = None):
         self.ws_url = ws_url
+        self.adapter = adapter  # "hci0", "hci1"... ou None (défaut système)
         self.ws = None
         # connection_handle -> BleakClient
         self.connections: dict[int, BleakClient] = {}
@@ -168,10 +205,13 @@ class BleProxyClient:
         def detection_callback(device, advertisement_data: AdvertisementData):
             asyncio.create_task(self._on_device_discovered(device, advertisement_data, normalized_filters))
 
-        self.scanner = BleakScanner(detection_callback=detection_callback)
+        scanner_kwargs = {"detection_callback": detection_callback}
+        if self.adapter:
+            scanner_kwargs["adapter"] = self.adapter
+        self.scanner = BleakScanner(**scanner_kwargs)
         await self.scanner.start()
         self.scanning = True
-        log.info(f"Scan démarré (filtre service_uuids={service_uuids or 'aucun'})")
+        log.info(f"Scan démarré (filtre service_uuids={service_uuids or 'aucun'}, adapter={self.adapter or 'default'})")
         return {}
 
     async def _on_device_discovered(self, device, adv: AdvertisementData, filters):
@@ -257,11 +297,13 @@ class BleProxyClient:
             self.scanning = False
             self.scanner = None
 
-        client = BleakClient(
-            device,
-            timeout=timeout,
-            disconnected_callback=make_disconnect_cb(handle),
-        )
+        client_kwargs = {
+            "timeout": timeout,
+            "disconnected_callback": make_disconnect_cb(handle),
+        }
+        if self.adapter:
+            client_kwargs["adapter"] = self.adapter
+        client = BleakClient(device, **client_kwargs)
         try:
             await client.connect()
         except Exception as e:
@@ -493,11 +535,19 @@ class CommandError(Exception):
 
 async def main():
     if len(sys.argv) < 2:
-        print("Usage: python ble_proxy_client.py ws://<ip>:5580/ble")
+        print("Usage: python ble_proxy_client.py ws://<ip>:5580/ble [--adapter AA:BB:CC:DD:EE:FF]")
         sys.exit(1)
 
     url = sys.argv[1]
-    client = BleProxyClient(url)
+    adapter = None
+    if "--adapter" in sys.argv:
+        idx = sys.argv.index("--adapter")
+        if idx + 1 < len(sys.argv):
+            mac = sys.argv[idx + 1]
+            adapter = resolve_mac_to_hci(mac)
+            log.info(f"Adaptateur sélectionné : {adapter} (MAC {mac})")
+
+    client = BleProxyClient(url, adapter=adapter)
     await client.run()
 
 
