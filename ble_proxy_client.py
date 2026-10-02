@@ -406,7 +406,11 @@ class BleProxyClient:
         client = self._get_client(handle)
 
         async def callback(_sender, data: bytearray):
-            await self._on_notification(handle, char_uuid, bytes(data))
+            log.info(f"subscribe callback ENTERED: sender={_sender} char={char_uuid} len={len(data)} data={data.hex()}")
+            try:
+                await self._on_notification(handle, char_uuid, bytes(data))
+            except Exception as exc:
+                log.error(f"subscribe callback EXCEPTION: {exc}", exc_info=True)
 
         try:
             await client.start_notify(char_uuid, callback)
@@ -445,7 +449,11 @@ class BleProxyClient:
         #    répondre immédiatement après l'écriture, avant que start_notify
         #    ne soit en place si on fait l'inverse.
         async def callback(_sender, data: bytearray):
-            await self._on_notification(handle, subscribe_uuid, bytes(data))
+            log.info(f"write_and_subscribe callback ENTERED: sender={_sender} len={len(data)} data={data.hex()}")
+            try:
+                await self._on_notification(handle, subscribe_uuid, bytes(data))
+            except Exception as exc:
+                log.error(f"write_and_subscribe callback EXCEPTION: {exc}", exc_info=True)
 
         try:
             await client.start_notify(subscribe_uuid, callback)
@@ -476,16 +484,21 @@ class BleProxyClient:
 
     # --- Notifications --------------------------------------------------
     async def _on_notification(self, handle: int, char_uuid: str, data: bytes):
-        # Préférence binaire si c'est la caractéristique C2 (notify BTP)
-        if char_uuid == C2_UUID or self.last_subscribe_char.get(handle) == char_uuid:
-            await self.send_binary(OP_NOTIFICATION, handle, data)
-        else:
-            await self.send_event("characteristic_notification", {
-                "connection_handle": handle,
-                "characteristic_uuid": char_uuid.upper(),
-                "value": base64.b64encode(data).decode(),
-            })
-        log.info(f"Notification reçue handle={handle} char={char_uuid} ({len(data)} bytes)")
+        log.info(f"_on_notification ENTRY handle={handle} char={char_uuid} len={len(data)} data={data.hex()}")
+        try:
+            # Préférence binaire si c'est la caractéristique C2 (notify BTP)
+            if char_uuid == C2_UUID or self.last_subscribe_char.get(handle) == char_uuid:
+                await self.send_binary(OP_NOTIFICATION, handle, data)
+                log.info(f"_on_notification: send_binary OK handle={handle}")
+            else:
+                await self.send_event("characteristic_notification", {
+                    "connection_handle": handle,
+                    "characteristic_uuid": char_uuid.upper(),
+                    "value": base64.b64encode(data).decode(),
+                })
+                log.info(f"_on_notification: send_event OK handle={handle}")
+        except Exception as exc:
+            log.error(f"_on_notification EXCEPTION handle={handle} char={char_uuid}: {exc}", exc_info=True)
 
     # ------------------------------------------------------------------
     # Frames binaires
