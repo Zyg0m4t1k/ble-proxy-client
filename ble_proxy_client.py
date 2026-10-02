@@ -513,10 +513,11 @@ class BleProxyClient:
                 return
 
             try:
+                # Matter BTP requires ATT Write Request (with response) for C1 writes.
                 await client.write_gatt_char(
                     char_uuid,
                     payload,
-                    response=False,
+                    response=True,
                 )
             except Exception:
                 log.exception(
