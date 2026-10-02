@@ -318,7 +318,8 @@ class BleProxyClient:
     async def _on_disconnected(self, handle: int, reason: str):
         if handle not in self.connections:
             return
-        log.info(f"Déconnexion inattendue handle={handle} reason={reason}")
+        sub_char = self.last_subscribe_char.get(handle, "aucune")
+        log.warning(f"Déconnexion inattendue handle={handle} reason={reason} (subscribe active={sub_char})")
         # Envoyer l'événement AVANT de nettoyer, pour laisser les écritures
         # en vol se terminer proprement via le guard is_connected.
         await self.send_event("disconnected", {"connection_handle": handle, "reason": reason})
@@ -445,16 +446,24 @@ class BleProxyClient:
         subscribe_uuid = normalize_uuid(args["subscribe_uuid"])
         client = self._get_client(handle)
 
-        # 1. D'abord écouter la réponse (CCCD enable) — le périphérique peut
-        #    répondre immédiatement après l'écriture, avant que start_notify
-        #    ne soit en place si on fait l'inverse.
+        # 1. Écriture d'abord (avec réponse GATT attendue)
+        # Sur WinRT, écrire C1 AVANT d'activer le CCCD sur C2 est nécessaire :
+        # activer indicate avant le write empêche le device de répondre.
         async def callback(_sender, data: bytearray):
-            log.info(f"write_and_subscribe callback ENTERED: sender={_sender} len={len(data)} data={data.hex()}")
+            log.info(f"write_and_subscribe callback: len={len(data)} data={data.hex()}")
             try:
                 await self._on_notification(handle, subscribe_uuid, bytes(data))
             except Exception as exc:
                 log.error(f"write_and_subscribe callback EXCEPTION: {exc}", exc_info=True)
 
+        try:
+            await client.write_gatt_char(write_uuid, write_value, response=write_response)
+        except Exception as e:
+            raise CommandError("write_failed", str(e))
+        self.last_write_char[handle] = write_uuid
+        log.info(f"write_and_subscribe: écriture {write_uuid} OK ({len(write_value)} bytes)")
+
+        # 2. Abonnement immédiat (CCCD enable) sur C2
         try:
             await client.start_notify(subscribe_uuid, callback)
         except Exception as e:
@@ -462,14 +471,6 @@ class BleProxyClient:
 
         self.last_subscribe_char[handle] = subscribe_uuid
         log.info(f"write_and_subscribe: abonnement {subscribe_uuid} OK")
-
-        # 2. Ensuite seulement envoyer le handshake BTP
-        try:
-            await client.write_gatt_char(write_uuid, write_value, response=write_response)
-        except Exception as e:
-            raise CommandError("write_failed", str(e))
-        self.last_write_char[handle] = write_uuid
-        log.info(f"write_and_subscribe: écriture {write_uuid} OK ({len(write_value)} bytes)")
         return {}
 
     # --- MTU ------------------------------------------------------------
