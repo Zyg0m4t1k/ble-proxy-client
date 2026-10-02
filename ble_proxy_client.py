@@ -441,15 +441,9 @@ class BleProxyClient:
         subscribe_uuid = normalize_uuid(args["subscribe_uuid"])
         client = self._get_client(handle)
 
-        # 1. Écriture (avec réponse GATT attendue)
-        try:
-            await client.write_gatt_char(write_uuid, write_value, response=write_response)
-        except Exception as e:
-            raise CommandError("write_failed", str(e))
-        self.last_write_char[handle] = write_uuid
-        log.info(f"write_and_subscribe: écriture {write_uuid} OK ({len(write_value)} bytes)")
-
-        # 2. Abonnement immédiat (CCCD enable) sur l'autre caractéristique
+        # 1. D'abord écouter la réponse (CCCD enable) — le périphérique peut
+        #    répondre immédiatement après l'écriture, avant que start_notify
+        #    ne soit en place si on fait l'inverse.
         async def callback(_sender, data: bytearray):
             await self._on_notification(handle, subscribe_uuid, bytes(data))
 
@@ -460,6 +454,14 @@ class BleProxyClient:
 
         self.last_subscribe_char[handle] = subscribe_uuid
         log.info(f"write_and_subscribe: abonnement {subscribe_uuid} OK")
+
+        # 2. Ensuite seulement envoyer le handshake BTP
+        try:
+            await client.write_gatt_char(write_uuid, write_value, response=write_response)
+        except Exception as e:
+            raise CommandError("write_failed", str(e))
+        self.last_write_char[handle] = write_uuid
+        log.info(f"write_and_subscribe: écriture {write_uuid} OK ({len(write_value)} bytes)")
         return {}
 
     # --- MTU ------------------------------------------------------------
